@@ -143,9 +143,9 @@ def getDistAxis(ds, datarange=('min','max')):
     zero = ds['coords'][0][minim]
     scale = ds['pixelSize'][0]
 
-    if window5nm['pixelUnit'][0] == 'µm':
+    if ds['pixelUnit'][0] == 'µm':
         scale = scale * 1000
-    elif window5nm['pixelUnit'][0] == 'nm':
+    elif ds['pixelUnit'][0] == 'nm':
         pass
     else:
         sys.exit("pixelUnit value is ambiguous.")
@@ -179,13 +179,13 @@ class InelasticTransmission:
     def inelMFPMalis(self, Zeff, AEL=False):
         if AEL == False:
             AEL = 7.6 * (Zeff ** 0.36)
-            print("The average energy loss (Em, eV) was calculated to be ", str(AEL))
+            # print("The average energy loss (Em, eV) was calculated to be ", str(AEL))
         F = (1 + self.beamE/1022)/((1 + self.beamE/511)**2)
-        inelMFP = (106 * F * self.beamE) / (self.beamE * np.log(2 * self.collection_angle * self.beamE / AEL))
+        inelMFP = (106 * F * self.beamE) / (AEL * np.log(2 * self.collection_angle * self.beamE / AEL))
         print("The mean free path of electric scattering was calculated (using Malis et al.) to be ", str(inelMFP))
         return inelMFP
 
-    def inelMFPIakoubovski(self, density, CSA=False, sat_fact=20):
+    def inelMFPIakoubovski(self, density, sat_fact, CSA=False):
         F = (1 + self.beamE/1022)/((1 + self.beamE/511)**2)
         if CSA == False:
             CSA = 5.5 * ((density ** 0.3) / (F * self.beamE))
@@ -198,9 +198,26 @@ if __name__ == '__main__':
     ds = dm.dmReader("data/empty_5nmcell_linescan_Feb10_alignedZLP/EELS Spectrum Image aligned.dm4")
     # print(ds['pixelUnit'][0])
     # print(TotalEELSAreaAcrossScan(ds, start=150))
-    # plt.plot(ds['data'][85])
-    # plt.show()
+    plt.plot(ds['data'][-10])
+    plt.xlim(200, 300)
+    plt.ylim(0, 20000)
+    plt.ylabel('Intensity (counts)')
+    plt.xlabel('Energy loss (keV)')
+    plt.savefig('data/EELS_spectrum.pdf')
+    plt.show()
 
+    '''# Tyler's code for Titan
+    set_collection_angle = 55
+    Zeff_Si3N4 = 10.36
+    Em_Si3N4_eV = (7.6 * Zeff_Si3N4 ** 0.36)
+    E0_keV = 300
+    F_rel_factor = (1 + E0_keV / 1022) / (1 + E0_keV / 511) ** 2
+    collection_angle_mrad = set_collection_angle  # Talos 200: 23 mrad # Titan HB: 55 mrad
+    IMFP = (106 * F_rel_factor * E0_keV) / (Em_Si3N4_eV * np.log((2 * collection_angle_mrad * E0_keV) / Em_Si3N4_eV))
+    print(IMFP)'''
+    # Test Titan calc with my code.
+    # testc = InelasticTransmission(beamE=300, collection_angle=55)
+    # testmfpm = testc.inelMFPMalis(Zeff=10.36)
 
 
     beamE = 300  # keV
@@ -208,33 +225,26 @@ if __name__ == '__main__':
     Zeff_SiN = 10.36  # Si3N4
     density_SiN = 3.17  # g/cm3
 
-    iTransmission = InelasticTransmission(beamE=beamE, collection_angle=collection_angle)
-    IMFPSiN_malis = iTransmission.inelMFPMalis(Zeff=Zeff_SiN)
-    IMFPSiN_iakoubovski = iTransmission.inelMFPIakoubovski(density=density_SiN)
-    # interpolated from riley = 72.67
+    IMFPSiN_malis = InelasticTransmission(beamE=beamE, collection_angle=collection_angle).inelMFPMalis(Zeff=Zeff_SiN)
 
     # Trim data to usable spectra (inside window).
-    cutoff = 163
+    cutoff = 250 #163
     ds['data'] = ds['data'][cutoff:]
 
     # Get thickness data.
     lnI_I0O = pd.DataFrame(getlnI_I0OverPoints(ds, method='simple'))
     t_malis = lnI_I0O * IMFPSiN_malis
-    t_iakoubovski = lnI_I0O * IMFPSiN_iakoubovski
-    t_riley = lnI_I0O * 72.67
+    print(np.average(lnI_I0O))
 
     # Get scan distance data.
     distance, unit = getDistAxis(ds, (cutoff,'max'))
 
-    print(distance)
-
     plt.plot(distance, t_malis, label='malais')
-    plt.plot(distance, t_iakoubovski, label='iakoubovski')
-    plt.plot(distance, t_riley, label='riley')
+    print(np.average(t_malis))
     plt.ylabel('Thickness (nm)')
     plt.xlabel('Distance from window edge (' + str(unit) + ')')
     plt.legend()
-    plt.show()
+    # plt.show()
 
     sys.exit(0)
 
