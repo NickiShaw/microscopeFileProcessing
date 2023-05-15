@@ -221,3 +221,6 @@ fabric.properties
 # EELS files
 *.dm4
 data/
+
+# Webapp files
+*.html
