@@ -7,6 +7,7 @@ import h5py
 import numpy as np
 import io
 import os
+import glob
 import csv
 from PIL import Image
 import ujson
@@ -16,6 +17,12 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import filedialog as fd
 from tkinter.messagebox import showinfo
+
+
+def removeFilesinDir(folderpath):
+    files = glob.glob(str(folderpath) + '*')
+    for f in files:
+        os.remove(f)
 
 
 class GUI:
@@ -28,23 +35,23 @@ class GUI:
         return path
 
     @staticmethod
-    def save_file(type, initialfilename, windowtext, filetypeexclude=False):
+    def save_file(filetype, initialfilename, windowtext, filetypeexclude=False):
         root = tk.Tk()
         types = []
-        if type == "csv":
+        if filetype == "csv":
             types.append(("CSV file", ".csv"))
-        if type == "jpeg" or type == "jpg":
+        if filetype == "jpeg" or filetype == "jpg":
             types.append(("JPEG file", ".jpg"))
-        if type == "tif" or type == "tiff":
+        if filetype == "tif" or filetype == "tiff":
             types.append(("TIFF file", ".tif"))
         path = fd.asksaveasfilename(filetypes=types, initialfile=initialfilename, title=windowtext)
         if filetypeexclude:
-            if "." + str(type) in path:
-                ext = "." + str(type)
+            if "." + str(filetype) in path:
+                ext = "." + str(filetype)
                 path = path.replace(ext, '')
         else:
-            if "." + str(type) not in path:
-                path = path + "." + str(type)
+            if "." + str(filetype) not in path:
+                path = path + "." + str(filetype)
         print("Saving " + str(path))
         root.destroy()
         return path
@@ -117,23 +124,23 @@ class frameExporter:
             os.makedirs(path)
 
     @staticmethod
-    def saveFrame(h5pyfile, name, path, type="jpg", framenum=0):
+    def saveFrame(h5pyfile, name, path, filetype="jpg", framenum=0):
         frameExporter.checkPath(path)
         data = h5pyfile['Data/Image/' + navigate.getMemberName(h5pyfile, '/Data/Image/')]
         frame = np.array(data['Data'][:, :, framenum]).astype('uint8')
         rgbImage = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
-        pathname = path + '/' + name + '_frame' + str(frame) + '.' + type
+        pathname = path + '/' + name + '_frame' + str(frame) + '.' + filetype
         cv2.imwrite(pathname, rgbImage)
 
     @staticmethod
-    def saveAllFrames(h5pyfile, originalfilename, type="jpg", auto=False):
+    def saveAllFrames(h5pyfile, originalfilename, filetype="jpg", auto=False):
         if auto:
             # Make folder for frame images.
             folderpath = originalfilename + "/"
             os.makedirs(folderpath)
             path = str(folderpath) + navigate.parseFileName(originalfilename)
         else:
-            path = GUI.save_file(type, navigate.parseFileName(originalfilename), "Choose folder to save images frames",
+            path = GUI.save_file("jpg", navigate.parseFileName(originalfilename), "Choose folder to save images frames",
                                  filetypeexclude=True)
         print("Saveframes path: " + str(path))
         # Save files
@@ -142,24 +149,34 @@ class frameExporter:
         for i in range(len(data['Data'][0][0])):
             frame = np.array(data['Data'][:, :, i]).astype('uint8')
             rgbImage = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
-            outname = path + "_frame" + str(i) + "." + str(type)
+            outname = path + "_frame" + str(i) + "." + str(filetype)
             cv2.imwrite(outname, rgbImage)
 
     @staticmethod
-    def getPath(originalfilename, auto=False):
-        if auto:
-            # Make folder for frame images.
+    def getPath(originalfilename, multi, auto):
+        if multi:
+            # Create a folder with the same name as the original file.
             folderpath = originalfilename + "/"
-            os.makedirs(folderpath)
+            # Remove items in folder
+            if os.path.exists(folderpath):
+                removeFilesinDir(folderpath)
+            else:
+                os.makedirs(folderpath)
             path = str(folderpath) + navigate.parseFileName(originalfilename)
         else:
-            path = GUI.save_file(type, navigate.parseFileName(originalfilename), "Choose folder to save images frames",
+            # Keep the same path.
+            path = originalfilename
+
+        # Return file names without file type.
+        if auto:
+            return path
+        else:
+            return GUI.save_file("jpg", navigate.parseFileName(originalfilename), "Choose folder to save images frames",
                                  filetypeexclude=True)
-        return originalfilename  # no folder
 
     @staticmethod
     def saveMultiFrames(data, path, filetype='jpg'):
-        data = np.array(data).astype('uint8')
+        data = np.array(data)
         for i in range(data.shape[-1]):
             plt.imshow(data[:, :, i], cmap=plt.cm.gray)
             plt.axis('off')
@@ -169,7 +186,7 @@ class frameExporter:
 
     @staticmethod
     def saveOnlyFrame(data, path, filetype="jpg"):
-        data = np.array(data).astype('uint8')
+        data = np.array(data)
         pathname = path + '.' + filetype
         plt.imshow(data, cmap=plt.cm.gray)
         plt.axis('off')
@@ -177,20 +194,20 @@ class frameExporter:
         plt.show()
 
     @staticmethod
-    def frameOutput(h5pyfile, originalfilename):
-
-        # Get outpath.
-        # path = frameExporter.getPath(originalfilename) + "_test" # to change name
-        path = originalfilename + "_test"
+    def frameOutput(h5pyfile, originalfilename, auto):
 
         data = h5pyfile['Data/Image/' + navigate.getMemberName(h5pyfile, '/Data/Image/') + '/Data']
 
         nframes = h5pyfile['Data/Image/' + navigate.getMemberName(h5pyfile, '/Data/Image/') + '/Data'].shape[-1]
         # Check if multiple frames (video) and save.
         if nframes > 1:
+            # Get output path, folder for multiple images.
+            path = frameExporter.getPath(originalfilename, multi=True, auto=auto)
             frameExporter.saveMultiFrames(data, path)
             print('multiple frames')
         elif nframes == 1:
+            # Get output path, for one images.
+            path = frameExporter.getPath(originalfilename, multi=False, auto=auto)
             print('only one frame')
             frameExporter.saveOnlyFrame(data, path)
         else:
@@ -265,6 +282,7 @@ class metadata:
 
         for i in range(self.nframes):
             jsondict = self.convertASCII(i)
+            print(jsondict)
             items = []
             self.flattenAndCollect(jsondict, items)
             out.append(items)
@@ -314,7 +332,15 @@ f = h5py.File(file, 'r')
 
 plainpathname = str(file.replace('.emd', ''))
 print(plainpathname)
-frameExporter.frameOutput(f, originalfilename=plainpathname)
+
+# Auto processing ask.
+if GUI.autoProcessAsk() == "yes":
+    auto = True
+else:
+    auto = False
+
+frameExporter.frameOutput(f, originalfilename=plainpathname, auto=auto)
+# metadata(f).getCSVmetadata(originalfilename=plainpathname, filter=filter, auto=True)
 
 # if GUI.autoProcessAsk() == "yes":
 #
