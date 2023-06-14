@@ -27,12 +27,12 @@ def removeFilesinDir(folderpath):
 
 class GUI:
     @staticmethod
-    def select_file():
+    def select_files():
         root = tk.Tk()
-        path = fd.askopenfilename(filetypes=[("EMD files", ".emd")], title="Choose .emd file to analyze")
-        print('Opening "' + str(path) + '"')
+        paths = fd.askopenfilenames(filetypes=[("EMD files", ".emd")], title="Choose .emd file(s).")
+        paths = root.tk.splitlist(paths)
         root.destroy()
-        return path
+        return paths
 
     @staticmethod
     def save_file(filetype, initialfilename, windowtext, filetypeexclude=False):
@@ -52,15 +52,13 @@ class GUI:
         else:
             if "." + str(filetype) not in path:
                 path = path + "." + str(filetype)
-        print("Saving " + str(path))
         root.destroy()
         return path
 
     @staticmethod
-    def autoProcessAsk():
+    def ProcessAsk(question: str):
         root = tk.Tk()
-        decision = tk.messagebox.askquestion('Auto Process', 'Would you like to perform auto-processing?',
-                                             icon='question')
+        decision = tk.messagebox.askquestion('', question, icon='question')
         root.destroy()
         return decision
 
@@ -108,110 +106,129 @@ class navigate:
         else:
             return members
 
+
+class EMDreader:
+    """
+    Unpacks emd data files with the h5py package, by navigating subdirectories.
+
+    Parameters
+    ----------
+    path : str
+        Path to file, NOT a list of paths.
+    """
+
+    def __init__(self, singlePath: str):
+        self.path = singlePath
+        self.singleH5pyObject = h5py.File(singlePath, 'r', driver='core')
+
     @staticmethod
-    def parseFileName(file):
-        return str(file).split("/")[-1].split(".")[0]
+    def convertASCII(transposed_meta, frame):
+        ascii_meta = transposed_meta[frame]
+        metadata_text = ''.join(chr(i) for i in ascii_meta)
+        ASCii = metadata_text.replace("\0", '')
+        return ujson.loads(ASCii)
+
+    def unpackMetadata(self):
+
+        # TODO add implementation to search subfolders if the format is not the Velox default.
+
+        try:
+            metadata = self.singleH5pyObject[
+                'Data/Image/' + navigate.getMemberName(self.singleH5pyObject, '/Data/Image/') + '/Metadata']
+            transposed_meta = [list(i) for i in zip(*(metadata[:]))]
+        except:
+            raise ValueError("Metadata was not able to be read, see unpackMetadata function.")
+
+        # Unpack metadata dictionaries.
+        meta = {}
+        nframes = metadata.shape[-1]
+        for i in range(nframes):
+            meta[i] = self.convertASCII(transposed_meta, i)
+
+        return meta
+
+    def unpackData(self):
+
+        # TODO add implementation to search subfolders if the format is not the Velox default.
+
+        try:
+            data = self.singleH5pyObject[
+                'Data/Image/' + navigate.getMemberName(self.singleH5pyObject, '/Data/Image/') + '/Data']
+            data = np.array(data)
+            return data
+
+        except:
+            raise ValueError("File was not able to be read, see unpackData function.")
+
+    def parseEMDdata(self):
+
+        data = self.unpackData()
+        # Shape single frame data by removing final channel.
+        if data.shape[-1] == 1:
+            data = data.reshape(data.shape[0], data.shape[1])
+            return data, False
+        # Shape multiple frame data with transpose.
+        else:
+            # data = data[...].transpose()
+            return data, True
 
 
 class frameExporter:
+    '''
+    fullFilePath = full path of original file.
+    multi = True for multiple frame data, false for single frame data.
+    '''
 
-    @staticmethod
-    def checkPath(path):
-        # Check whether the specified path exists or not
-        isExist = os.path.exists(path)
-        if not isExist:
-            # Create a new directory because it does not exist
-            os.makedirs(path)
+    def __init__(self, fullFilePath: str, multi: bool):
+        self.fileName = os.path.splitext(os.path.basename(fullFilePath))[0]
+        self.filePath = os.path.dirname(fullFilePath)
+        self.multi = multi
 
-    @staticmethod
-    def saveFrame(h5pyfile, name, path, filetype="jpg", framenum=0):
-        frameExporter.checkPath(path)
-        data = h5pyfile['Data/Image/' + navigate.getMemberName(h5pyfile, '/Data/Image/')]
-        frame = np.array(data['Data'][:, :, framenum]).astype('uint8')
-        rgbImage = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
-        pathname = path + '/' + name + '_frame' + str(frame) + '.' + filetype
-        cv2.imwrite(pathname, rgbImage)
-
-    @staticmethod
-    def saveAllFrames(h5pyfile, originalfilename, filetype="jpg", auto=False):
-        if auto:
-            # Make folder for frame images.
-            folderpath = originalfilename + "/"
-            os.makedirs(folderpath)
-            path = str(folderpath) + navigate.parseFileName(originalfilename)
-        else:
-            path = GUI.save_file("jpg", navigate.parseFileName(originalfilename), "Choose folder to save images frames",
-                                 filetypeexclude=True)
-        print("Saveframes path: " + str(path))
-        # Save files
-        data = h5pyfile['Data/Image/' + navigate.getMemberName(h5pyfile, '/Data/Image/')]
-
-        for i in range(len(data['Data'][0][0])):
-            frame = np.array(data['Data'][:, :, i]).astype('uint8')
-            rgbImage = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
-            outname = path + "_frame" + str(i) + "." + str(filetype)
-            cv2.imwrite(outname, rgbImage)
-
-    @staticmethod
-    def getPath(originalfilename, multi, auto):
-        if multi:
-            # Create a folder with the same name as the original file.
-            folderpath = originalfilename + "/"
-            # Remove items in folder
-            if os.path.exists(folderpath):
-                removeFilesinDir(folderpath)
+    def get_output_path(self):
+        if self.multi:
+            targetFolderPath = os.path.join(self.filePath, self.fileName)
+            if os.path.exists(targetFolderPath):
+                # if GUI.ProcessAsk('Existing folder found, for '+str(self.fileName)+' would you like to overwrite data?'):
+                #     print('Clearing existing folder.')
+                #     removeFilesinDir(targetFolderPath)
+                # else:
+                #     print('Skipping file.')
+                return None
             else:
-                os.makedirs(folderpath)
-            path = str(folderpath) + navigate.parseFileName(originalfilename)
+                print('No existing folder found.')
+                os.makedirs(targetFolderPath)
+            return targetFolderPath
         else:
-            # Keep the same path.
-            path = originalfilename
+            return self.filePath
 
-        # Return file names without file type.
-        if auto:
-            return path
+    def save_frames(self, data, dpi=300, filetype='jpg', show=False, nosave=False):
+        outputPath = self.get_output_path()
+        if outputPath == None:
+            return
+        print('Output path is: ' + str(outputPath))
+
+        if self.multi:
+            for i in range(data.shape[-1]):
+                plt.imshow(data[:, :, i], cmap=plt.cm.gray)
+                plt.axis('off')
+                pathname = os.path.join(outputPath, self.fileName + "_frame_" + str(i) + "." + str(filetype))
+                if not nosave:
+                    plt.savefig(pathname, dpi=dpi, bbox_inches='tight', pad_inches=0)
+                if show:
+                    plt.show(bbox_inches='tight', pad_inches=0)
+                else:
+                    plt.clf()
         else:
-            return GUI.save_file("jpg", navigate.parseFileName(originalfilename), "Choose folder to save images frames",
-                                 filetypeexclude=True)
-
-    @staticmethod
-    def saveMultiFrames(data, path, filetype='jpg'):
-        data = np.array(data)
-        for i in range(data.shape[-1]):
-            plt.imshow(data[:, :, i], cmap=plt.cm.gray)
+            data = np.array(data)
+            pathname = os.path.join(outputPath, self.fileName + '.' + filetype)
+            plt.imshow(data, cmap=plt.cm.gray)
             plt.axis('off')
-            pathname = path + "_frame" + str(i) + "." + str(filetype)
-            # plt.savefig(pathname, dpi=300, bbox_inches='tight', pad_inches=0)
-            plt.show()
-
-    @staticmethod
-    def saveOnlyFrame(data, path, filetype="jpg"):
-        data = np.array(data)
-        pathname = path + '.' + filetype
-        plt.imshow(data, cmap=plt.cm.gray)
-        plt.axis('off')
-        # plt.savefig(pathname, dpi=300, bbox_inches='tight', pad_inches=0)
-        plt.show()
-
-    @staticmethod
-    def frameOutput(h5pyfile, originalfilename, auto):
-
-        data = h5pyfile['Data/Image/' + navigate.getMemberName(h5pyfile, '/Data/Image/') + '/Data']
-
-        nframes = h5pyfile['Data/Image/' + navigate.getMemberName(h5pyfile, '/Data/Image/') + '/Data'].shape[-1]
-        # Check if multiple frames (video) and save.
-        if nframes > 1:
-            # Get output path, folder for multiple images.
-            path = frameExporter.getPath(originalfilename, multi=True, auto=auto)
-            frameExporter.saveMultiFrames(data, path)
-            print('multiple frames')
-        elif nframes == 1:
-            # Get output path, for one images.
-            path = frameExporter.getPath(originalfilename, multi=False, auto=auto)
-            print('only one frame')
-            frameExporter.saveOnlyFrame(data, path)
-        else:
-            sys.exit("In frameOutput, len(data['Data'][0][0]) is " + str(len(data['Data'][0][0])))
+            if not nosave:
+                plt.savefig(pathname, dpi=dpi, bbox_inches='tight', pad_inches=0)
+            if show:
+                plt.show(bbox_inches='tight', pad_inches=0)
+            else:
+                plt.clf()
 
 
 class videoViewer:
@@ -249,9 +266,13 @@ class videoViewer:
 
 class metadata:
 
-    def __init__(self, h5pyfile):
-        metalocation = navigate.getMemberName(h5pyfile, '/Data/Image/')  # CAUTION, may break.
-        self.meta = h5pyfile['/Data/Image/' + str(metalocation) + '/Metadata']
+    def __init__(self, fullFilePath: str):
+        self.fileName = os.path.splitext(os.path.basename(fullFilePath))[0]
+        self.filePath = os.path.dirname(fullFilePath)
+
+        self.singleH5pyObject = h5py.File(fullFilePath, 'r', driver='core')
+        metalocation = navigate.getMemberName(self.singleH5pyObject, '/Data/Image/')  # CAUTION, may break.
+        self.meta = self.singleH5pyObject['/Data/Image/' + str(metalocation) + '/Metadata']
         self.nframes = self.meta.shape[1]
         self.transposed_meta = [list(i) for i in zip(*(self.meta[:]))]
 
@@ -269,89 +290,32 @@ class metadata:
             else:
                 items.append(v)
 
-    def getCSVmetadata(self, originalfilename, filter=None, auto=False):
-        print("Parsing metadata.")
-        if auto:
-            pathname = str(originalfilename) + ".csv"
-        else:
-            pathname = GUI.save_file("csv", navigate.parseFileName(originalfilename),
-                                     "Choose place to save metadata file")
-        print("Saving metadata path: " + str(pathname))
+    def getCSVmetadata(self, transpose=False):
+        pathname = os.path.join(self.filePath, self.fileName + '.csv')
+
         out = []
         cols = list(pd.json_normalize(self.convertASCII(0)).columns.values)
 
         for i in range(self.nframes):
             jsondict = self.convertASCII(i)
-            print(jsondict)
             items = []
             self.flattenAndCollect(jsondict, items)
             out.append(items)
 
         df = pd.DataFrame(out, columns=cols)
-        if filter is None:
-            print("No filter, outputting all metadata.")
-            df.to_csv(pathname)
-        else:
-            print("Filtering metadata.")
-            newdf = df[filter]
-            newdf.to_csv(pathname)
 
-    def getMetaAllFrames(self, query, printoption):
-        out = []
-        m = self.convertASCII(0)
-        if printoption:
-            for i in m:
-                print(i)
-                for g in m[i]:
-                    print("--- " + str(g))
+        if transpose:
+            df = df.transpose()
 
-        for i in range(self.nframes):
-            meta = self.convertASCII(i)
-            if query == 'mag':
-                out.append(meta['CustomProperties']['StemMagnification']['value'])
-            elif query == 'sclbr':
-                out.append(meta['BinaryResult']['PixelSize']['width'])  # x and y should be the same
-                out.append(meta['BinaryResult']['PixelUnitX'])
-            else:
-                out.append('NA')
-        return out
+        df.to_csv(pathname)
 
-
-# Need to fix these names to be more general/pick columns.
-filter = ["Optics.Apertures.Aperture-1.Diameter", "Optics.Apertures.Aperture-2.Diameter",
-          "BinaryResult.ImageSize.width", "BinaryResult.ImageSize.height",
-          "BinaryResult.PixelSize.width", "BinaryResult.PixelSize.height", "BinaryResult.PixelUnitX",
-          "BinaryResult.PixelUnitY",
-          "CustomProperties.Detectors[SuperXG22].IncidentAngle.value"]
-
-filter = None
 
 # Import file with tkinter selection.
-file = GUI.select_file()
-f = h5py.File(file, 'r')
+fullFilePaths = GUI.select_files()
 
-plainpathname = str(file.replace('.emd', ''))
-print(plainpathname)
+for file in fullFilePaths:
+    metadata(file).getCSVmetadata(transpose=True)
 
-# Auto processing ask.
-if GUI.autoProcessAsk() == "yes":
-    auto = True
-else:
-    auto = False
-
-frameExporter.frameOutput(f, originalfilename=plainpathname, auto=auto)
-# metadata(f).getCSVmetadata(originalfilename=plainpathname, filter=filter, auto=True)
-
-# if GUI.autoProcessAsk() == "yes":
-#
-#     # Export all frames to folder.
-#     frameExporter.frameOutput(f, originalfilename=plainpathname)
-#
-#     # Export important metadata to csv.
-#     # metadata(f).getCSVmetadata(originalfilename=plainpathname, filter=filter, auto=True)
-# else:
-#     # Export all frames to folder.
-#     frameExporter.saveAllFrames(f, originalfilename=plainpathname)
-#
-#     # Export important metadata to csv.
-#     # metadata(f).getCSVmetadata(originalfilename=plainpathname)
+for file in fullFilePaths:
+    data, multi = EMDreader(file).parseEMDdata()
+    frameExporter(file, multi).save_frames(data)
